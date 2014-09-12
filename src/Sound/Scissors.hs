@@ -11,6 +11,7 @@ import Data.Proxy
 import System.IO.Temp (openTempFile)
 import System.IO (hClose)
 import Control.Monad
+import System.Process (callProcess)
 
 data Side = Begin | End
   deriving (Eq, Ord, Show, Read, Enum, Bounded)
@@ -81,7 +82,7 @@ freaky :: Audio 48000 2
 freaky = file "freaky.wav"
 
 runSox :: [String] -> IO ()
-runSox = undefined
+runSox = callProcess "sox"
 
 runAudio :: FilePath -> Audio' -> IO FilePath
 runAudio tempdir = go where
