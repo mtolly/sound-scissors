@@ -3,6 +3,7 @@
   , KindSignatures
   , GADTs
   , TypeOperators
+  , TupleSections
   #-}
 module Sound.Scissors where
 
@@ -10,13 +11,14 @@ import GHC.TypeLits
 import Data.Proxy
 import System.IO.Temp (openTempFile)
 import System.IO (hClose)
+import Control.Monad
 
 data Audio'
   = Silence Integer Integer
   | File String
-  | Concatenate [Audio']
-  | Merge [Audio']
-  | Mix [Audio']
+  | Concatenate [(Double, Audio')]
+  | Merge [(Double, Audio')]
+  | Mix [(Double, Audio')]
   | Resample Audio' Integer
   deriving (Eq, Ord, Show, Read)
 
@@ -25,13 +27,13 @@ newtype Audio (freq :: Nat) (chans :: Nat)
   deriving (Eq, Ord, Show, Read)
 
 concatenate :: [Audio f c] -> Audio f c
-concatenate = Audio . Concatenate . map rawAudio
+concatenate = Audio . Concatenate . map ((1,) . rawAudio)
 
 merge :: Audio f c1 -> Audio f c2 -> Audio f (c1 + c2)
-merge (Audio x) (Audio y) = Audio $ Merge [x, y]
+merge (Audio x) (Audio y) = Audio $ Merge [(1, x), (1, y)]
 
 mix :: [Audio f c] -> Audio f c
-mix = Audio . Mix . map rawAudio
+mix = Audio . Mix . map ((1,) . rawAudio)
 
 silence :: (KnownNat f, KnownNat c) => Audio f c
 silence = let
@@ -87,14 +89,26 @@ runAudio tempdir = go where
         ]
       return temp
     File fp -> return fp
-    Concatenate auds -> do
-      inputs <- mapM go auds
-      temp <- tempFile tempdir "scissors.wav"
-      if null inputs
-        then error "runAudio: can't concatenate 0 audio files"
-        else do
-          runSox $ inputs ++ [temp]
-          return temp
+    Concatenate auds -> if null auds
+      then error "runAudio: can't concatenate 0 audio files"
+      else do
+        inputs <- forM auds $ \(v, aud) -> do
+          f <- go aud
+          return (v, f)
+        temp <- tempFile tempdir "scissors.wav"
+        runSox $ (inputs >>= \(vel, f) -> ["-v", show vel, show f]) ++ [temp]
+        return temp
     Merge auds -> undefined
-    Mix auds -> undefined
+    Mix auds -> if null auds
+      then error "runAudio: can't concatenate 0 audio files"
+      else do
+        inputs <- forM auds $ \(v, aud) -> do
+          f <- go aud
+          return (v, f)
+        temp <- tempFile tempdir "scissors.wav"
+        runSox
+          $ ["--combine", "mix"]
+          ++ (inputs >>= \(vel, f) -> ["-v", show vel, show f])
+          ++ [temp]
+        return temp
     Resample aud freq -> undefined
