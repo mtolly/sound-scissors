@@ -8,6 +8,8 @@ module Sound.Scissors where
 
 import GHC.TypeLits
 import Data.Proxy
+import System.IO.Temp (openTempFile)
+import System.IO (hClose)
 
 data Audio'
   = Silence Integer Integer
@@ -61,3 +63,38 @@ myfile = file "stereo.mp3"
 
 freaky :: Audio 48000 2
 freaky = file "freaky.wav"
+
+runSox :: [String] -> IO ()
+runSox = undefined
+
+tempFile :: FilePath -> String -> IO FilePath
+tempFile dir pat = do
+  (fp, h) <- openTempFile dir pat
+  hClose h
+  return fp
+
+runAudio :: FilePath -> Audio' -> IO FilePath
+runAudio tempdir = go where
+  go x = case x of
+    Silence freq chans -> do
+      temp <- tempFile tempdir "scissors.wav"
+      runSox
+        [ "-n"
+        , temp
+        , "trim", "0", "0"
+        , "channels", show chans
+        , "rate", show freq
+        ]
+      return temp
+    File fp -> return fp
+    Concatenate auds -> do
+      inputs <- mapM go auds
+      temp <- tempFile tempdir "scissors.wav"
+      if null inputs
+        then error "runAudio: can't concatenate 0 audio files"
+        else do
+          runSox $ inputs ++ [temp]
+          return temp
+    Merge auds -> undefined
+    Mix auds -> undefined
+    Resample aud freq -> undefined
