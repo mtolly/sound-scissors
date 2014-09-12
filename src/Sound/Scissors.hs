@@ -57,6 +57,11 @@ resample (Audio x) = let
   res = Audio $ Resample x $ frequency res
   in res
 
+pad, trim, cutoff :: Side -> Double -> Audio f c -> Audio f c
+pad    side len = Audio . Pad    side len . rawAudio
+trim   side len = Audio . Trim   side len . rawAudio
+cutoff side len = Audio . Cutoff side len . rawAudio
+
 frequency :: (KnownNat f) => Audio f c -> Integer
 frequency = let
   makeProxy :: Audio f c -> Proxy f
