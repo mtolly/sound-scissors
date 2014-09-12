@@ -3,7 +3,6 @@
   , KindSignatures
   , GADTs
   , TypeOperators
-  , TupleSections
   #-}
 module Sound.Scissors where
 
@@ -13,9 +12,15 @@ import System.IO.Temp (openTempFile)
 import System.IO (hClose)
 import Control.Monad
 
+data Side = Begin | End
+  deriving (Eq, Ord, Show, Read, Enum, Bounded)
+
 data Audio'
   = Silence Integer Integer
   | File String
+  | Pad Side Double Audio'
+  | Trim Side Double Audio'
+  | Cutoff Side Double Audio'
   | Concatenate [(Double, Audio')]
   | Merge [(Double, Audio')]
   | Mix [(Double, Audio')]
@@ -26,14 +31,18 @@ newtype Audio (freq :: Nat) (chans :: Nat)
   = Audio { rawAudio :: Audio' }
   deriving (Eq, Ord, Show, Read)
 
-concatenate :: [Audio f c] -> Audio f c
-concatenate = Audio . Concatenate . map ((1,) . rawAudio)
+concatenate :: (KnownNat f, KnownNat c) => [Audio f c] -> Audio f c
+concatenate []    = silence
+concatenate [aud] = aud
+concatenate auds  = Audio $ Concatenate [ (1, rawAudio aud) | aud <- auds ]
 
 merge :: Audio f c1 -> Audio f c2 -> Audio f (c1 + c2)
 merge (Audio x) (Audio y) = Audio $ Merge [(1, x), (1, y)]
 
-mix :: [Audio f c] -> Audio f c
-mix = Audio . Mix . map ((1,) . rawAudio)
+mix :: (KnownNat f, KnownNat c) => [Audio f c] -> Audio f c
+mix []    = silence
+mix [aud] = aud
+mix auds  = Audio $ Mix [ (1, rawAudio aud) | aud <- auds ]
 
 silence :: (KnownNat f, KnownNat c) => Audio f c
 silence = let
@@ -69,46 +78,73 @@ freaky = file "freaky.wav"
 runSox :: [String] -> IO ()
 runSox = undefined
 
-tempFile :: FilePath -> String -> IO FilePath
-tempFile dir pat = do
-  (fp, h) <- openTempFile dir pat
-  hClose h
-  return fp
-
 runAudio :: FilePath -> Audio' -> IO FilePath
 runAudio tempdir = go where
+  new :: IO FilePath
+  new = do
+    (fp, h) <- openTempFile tempdir "scissors.wav"
+    hClose h
+    return fp
   go x = case x of
     Silence freq chans -> do
-      temp <- tempFile tempdir "scissors.wav"
+      output <- new
       runSox
         [ "-n"
-        , temp
+        , output
         , "trim", "0", "0"
         , "channels", show chans
         , "rate", show freq
         ]
-      return temp
+      return output
     File fp -> return fp
-    Concatenate auds -> if null auds
-      then error "runAudio: can't concatenate 0 audio files"
-      else do
-        inputs <- forM auds $ \(v, aud) -> do
-          f <- go aud
-          return (v, f)
-        temp <- tempFile tempdir "scissors.wav"
-        runSox $ (inputs >>= \(vel, f) -> ["-v", show vel, show f]) ++ [temp]
-        return temp
-    Merge auds -> undefined
-    Mix auds -> if null auds
-      then error "runAudio: can't concatenate 0 audio files"
-      else do
-        inputs <- forM auds $ \(v, aud) -> do
-          f <- go aud
-          return (v, f)
-        temp <- tempFile tempdir "scissors.wav"
-        runSox
-          $ ["--combine", "mix"]
-          ++ (inputs >>= \(vel, f) -> ["-v", show vel, show f])
-          ++ [temp]
-        return temp
-    Resample aud freq -> undefined
+    Concatenate auds -> combine "concatenate" auds
+    Merge auds -> combine "merge" auds
+    Mix auds -> combine "mix" auds
+    Resample aud freq -> do
+      input <- go aud
+      output <- new
+      runSox [input, output, "rate", show freq]
+      return output
+    Pad Begin len aud -> do
+      input <- go aud
+      output <- new
+      runSox [input, output, "pad", show len]
+      return output
+    Pad End len aud -> do
+      input <- go aud
+      output <- new
+      runSox [input, output, "pad", "0", show len]
+      return output
+    Trim Begin len aud -> do
+      input <- go aud
+      output <- new
+      runSox [input, output, "trim", show len]
+      return output
+    Trim End len aud -> do
+      input <- go aud
+      output <- new
+      runSox [input, output, "trim", "0", show $ negate len]
+      return output
+    Cutoff Begin len aud -> do
+      input <- go aud
+      output <- new
+      runSox [input, output, "trim", "0", show len]
+      return output
+    Cutoff End len aud -> do
+      input <- go aud
+      output <- new
+      runSox [input, output, "trim", show $ negate len]
+      return output
+  combine :: String -> [(Double, Audio')] -> IO FilePath
+  combine method auds = if null $ drop 1 auds
+    then error "runAudio: can't combine less than 2 audio files"
+    else do
+      inputs <- forM auds $ \(v, aud) -> do
+        f <- go aud
+        return (v, f)
+      output <- new
+      runSox
+        $ ["--combine", method]
+        ++ (inputs >>= \(vel, f) -> ["-v", show vel, show f])
+        ++ [output]
+      return output
