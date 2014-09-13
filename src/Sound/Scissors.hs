@@ -1,18 +1,16 @@
-{-# LANGUAGE
-  DataKinds
-  , KindSignatures
-  , GADTs
-  , TypeOperators
-  #-}
+{-# LANGUAGE DataKinds      #-}
+{-# LANGUAGE GADTs          #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE TypeOperators  #-}
 module Sound.Scissors where
 
-import GHC.TypeLits
-import Data.Proxy
-import System.IO.Temp (openTempFile)
-import System.IO (hClose)
-import Control.Monad
-import Data.Maybe
-import System.Process (callProcess, readProcess)
+import           Control.Monad  (forM, guard)
+import           Data.Maybe     (fromJust)
+import           Data.Proxy     (Proxy (..))
+import           GHC.TypeLits   (KnownNat, Nat, natVal, (+)())
+import           System.IO      (hClose)
+import           System.IO.Temp (openTempFile)
+import           System.Process (callProcess, readProcess)
 
 -- | An audio expression, typed by sample rate and number of channels.
 newtype Audio (rate :: Nat) (chans :: Nat)
