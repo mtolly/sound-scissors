@@ -2,7 +2,38 @@
 {-# LANGUAGE GADTs          #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE TypeOperators  #-}
-module Sound.Scissors where
+module Sound.Scissors
+
+( Audio
+, Rawdio(..)
+, Side(..)
+, Time(..)
+, toRawdio
+, unsafeFromRawdio
+
+, silence
+
+, concatenate
+, merge
+, mix
+
+, pad
+, trim
+, cutoff
+
+, file
+, unsafeFile
+
+, resample
+
+, sampleRate
+, channels
+, getSampleRate
+, getChannels
+
+, runRawdio
+
+) where
 
 import           Control.Monad  (forM, guard)
 import           Data.Maybe     (fromJust)
@@ -13,7 +44,7 @@ import           System.IO.Temp (openTempFile)
 import           System.Process (callProcess, readProcess)
 
 -- | An audio expression, typed by sample rate and number of channels.
-newtype Audio (rate :: Nat) (chans :: Nat)
+newtype Audio (r :: Nat) (c :: Nat)
   = Audio { toRawdio :: Rawdio }
   deriving (Eq, Ord, Show, Read)
 
@@ -38,7 +69,7 @@ data Time
   | Samples Double
   deriving (Eq, Ord, Show, Read)
 
-unsafeFromRawdio :: Rawdio -> Audio c f
+unsafeFromRawdio :: Rawdio -> Audio r c
 unsafeFromRawdio = Audio
 
 -- | Glues audio files together sequentially.
@@ -66,7 +97,7 @@ unsafeFile :: FilePath -> Audio r c
 unsafeFile = Audio . File
 
 -- | Resamples an audio file from one rate to another.
-resample :: (KnownNat f2) => Audio f1 c -> Audio f2 c
+resample :: (KnownNat r2) => Audio r1 c -> Audio r2 c
 resample (Audio x) = let res = Audio $ Resample x $ sampleRate res in res
 
 -- | Pads one end of the audio with silence.
@@ -94,16 +125,16 @@ channels = natVal . (undefined :: Audio r c -> Proxy c)
 runSox :: [String] -> IO ()
 runSox = callProcess "sox"
 
-getRate :: FilePath -> IO Integer
-getRate f = fmap read $ readProcess "soxi" ["-r", f] ""
+getSampleRate :: FilePath -> IO Integer
+getSampleRate f = fmap read $ readProcess "soxi" ["-r", f] ""
 
 getChannels :: FilePath -> IO Integer
 getChannels f = fmap read $ readProcess "soxi" ["-c", f] ""
 
 file :: (KnownNat r, KnownNat c) => FilePath -> IO (Maybe (Audio r c))
 file fp = do
-  r <- getRate fp
-  c <- getChannels  fp
+  r <- getSampleRate fp
+  c <- getChannels fp
   let res = guard (r == sampleRate aud && c == channels aud)
         >> Just (unsafeFile fp)
       aud = fromJust res

@@ -3,12 +3,13 @@ version:              0.1
 synopsis:             Slice up audio files with SoX, functionally and type-safe.
 description:
 
-  sound-scissors is a functional, type-safe interface to SoX, the audio Swiss
+  @sound-scissors@ is a functional, type-safe interface to SoX, the audio Swiss
   Army knife. It provides a simple DSL for building up algebraic expressions
   of audio files, plus an optional layer of type safety using GHC 7.8's type
   naturals to keep track of audio sample rates and channel counts.
   .
-  This package requires SoX to be installed and available on the command line.
+  This package requires SoX to be installed;
+  @sox@ and @soxi@ must be available on the command line.
 
 author:               Michael Tolly
 maintainer:           miketolly@gmail.com
