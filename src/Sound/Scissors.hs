@@ -3,6 +3,9 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE TupleSections  #-}
 {-# LANGUAGE TypeOperators  #-}
+{- |
+A functional, type-safe interface to slicing up audio files with SoX.
+-}
 module Sound.Scissors
 
 ( Audio
@@ -18,6 +21,10 @@ module Sound.Scissors
 , concatenate
 , merge
 , mix
+
+, concatenate'
+, merge'
+, mix'
 
 , pad
 , trim
@@ -53,9 +60,10 @@ import           System.IO.Temp   (openTempFile, withSystemTempDirectory)
 import           System.Process   (callProcess, readProcess)
 
 -- | An audio expression, typed by sample rate and number of channels.
-newtype Audio (r :: Nat) (c :: Nat)
-  = Audio { toRawdio :: Rawdio }
-  deriving (Eq, Ord, Show, Read)
+newtype Audio (r :: Nat) (c :: Nat) = Audio
+  { toRawdio :: Rawdio
+  -- ^ Removes the extra type information leaving a raw audio expression.
+  } deriving (Eq, Ord, Show, Read)
 
 -- | A raw audio expression.
 data Rawdio
@@ -74,27 +82,41 @@ data Rawdio
 data Side = Front | Back
   deriving (Eq, Ord, Show, Read, Enum, Bounded)
 
+-- | A length of time to cut or add.
 data Time
   = Seconds Double
   | Samples Double
   deriving (Eq, Ord, Show, Read)
 
+-- | Assigns an already-known sample rate and channel count to an expression.
 unsafeFromRawdio :: Rawdio -> Audio r c
 unsafeFromRawdio = Audio
 
+-- | Glues audio files together sequentially. Can also adjust volumes.
+concatenate' :: (KnownNat r, KnownNat c) => [(Double, Audio r c)] -> Audio r c
+concatenate' []    = silence
+concatenate' vauds = Audio $ Concatenate $ map (second toRawdio) vauds
+
 -- | Glues audio files together sequentially.
-concatenate :: (KnownNat r, KnownNat c) => [(Double, Audio r c)] -> Audio r c
-concatenate []    = silence
-concatenate vauds = Audio $ Concatenate $ map (second toRawdio) vauds
+concatenate :: (KnownNat r, KnownNat c) => [Audio r c] -> Audio r c
+concatenate = concatenate' . map (1,)
+
+-- | Stacks the channels of two audio files together. Can also adjust volumes.
+merge' :: (Double, Audio r c1) -> (Double, Audio r c2) -> Audio r (c1 + c2)
+merge' (a, Audio x) (b, Audio y) = Audio $ Merge [(a, x), (b, y)]
 
 -- | Stacks the channels of two audio files together.
-merge :: (Double, Audio r c1) -> (Double, Audio r c2) -> Audio r (c1 + c2)
-merge (a, Audio x) (b, Audio y) = Audio $ Merge [(a, x), (b, y)]
+merge :: Audio r c1 -> Audio r c2 -> Audio r (c1 + c2)
+merge x y = merge' (1, x) (1, y)
+
+-- | Mixes audio files together channel-wise. Can also adjust volumes.
+mix' :: (KnownNat r, KnownNat c) => [(Double, Audio r c)] -> Audio r c
+mix' []    = silence
+mix' vauds = Audio $ Mix $ map (second toRawdio) vauds
 
 -- | Mixes audio files together channel-wise.
-mix :: (KnownNat r, KnownNat c) => [(Double, Audio r c)] -> Audio r c
-mix []    = silence
-mix vauds = Audio $ Mix $ map (second toRawdio) vauds
+mix :: (KnownNat r, KnownNat c) => [Audio r c] -> Audio r c
+mix = mix' . map (1,)
 
 -- | An empty audio file, of zero length.
 silence :: (KnownNat r, KnownNat c) => Audio r c
@@ -133,6 +155,8 @@ channels = natVal . (undefined :: Audio r c -> Proxy c)
 sox :: [String] -> IO ()
 sox = callProcess "sox"
 
+-- | Calculates the sample rate of a raw audio expression.
+-- Any files referenced will be queried with @soxi@.
 getSampleRate :: Rawdio -> IO Integer
 getSampleRate raw = case raw of
   Silence r _ -> return r
@@ -145,6 +169,8 @@ getSampleRate raw = case raw of
   Mix         pairs -> getSampleRate $ snd $ head pairs
   Resample _ r -> return r
 
+-- | Calculates the channel count of a raw audio expression.
+-- Any files referenced will be queried with @soxi@.
 getChannels :: Rawdio -> IO Integer
 getChannels raw = case raw of
   Silence _ c -> return c
@@ -157,6 +183,8 @@ getChannels raw = case raw of
   Mix         pairs -> getChannels $ snd $ head pairs
   Resample _ r -> return r
 
+-- | Checks that the sample rate and channel count of the expression
+-- match the type it is being cast to. If not, returns 'Nothing'.
 fromRawdio :: (KnownNat r, KnownNat c) => Rawdio -> IO (Maybe (Audio r c))
 fromRawdio raw = do
   r <- getSampleRate raw
@@ -166,15 +194,19 @@ fromRawdio raw = do
       aud = fromJust res
   return res
 
+-- | Checks that the sample rate and channel count of the file
+-- match the type it is being cast to. If not, returns 'Nothing'.
 file :: (KnownNat r, KnownNat c) => FilePath -> IO (Maybe (Audio r c))
 file = fromRawdio . File
 
+-- | Writes a typed audio expression to a file.
 runAudio
   :: Audio r c -- ^ Audio expression to evaluate.
   -> FilePath -- ^ Output WAV file to generate.
   -> IO ()
 runAudio = runRawdio . toRawdio
 
+-- | Writes a raw audio expression to a file.
 runRawdio
   :: Rawdio -- ^ Audio expression to evaluate.
   -> FilePath -- ^ Output WAV file to generate.
@@ -183,6 +215,7 @@ runRawdio raw out = withSystemTempDirectory "scissors" $ \tempdir -> do
   f <- runRawdioIn tempdir raw
   copyFile f out
 
+-- | Writes a raw audio expression to a new file in a temporary directory.
 runRawdioIn
   :: FilePath -- ^ A directory for temporary files.
   -> Rawdio -- ^ Audio expression to evaluate.
