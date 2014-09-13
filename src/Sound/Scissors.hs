@@ -14,12 +14,14 @@ module Sound.Scissors
 , Time(..)
 , toRawdio
 , fromRawdio
+, fromRawdio'
 , unsafeFromRawdio
 
 -- * Basic audio primitives
 , silence
 , resample
 , file
+, file'
 , unsafeFile
 
 -- * Combining multiple audio files
@@ -50,9 +52,8 @@ module Sound.Scissors
 ) where
 
 import           Control.Arrow    (second)
-import           Control.Monad    (forM, guard)
+import           Control.Monad    (forM)
 import           Data.Char        (toLower)
-import           Data.Maybe       (fromJust)
 import           Data.Proxy       (Proxy (..))
 import qualified Data.Traversable as T
 import           GHC.TypeLits     (KnownNat, Nat, natVal, (+)())
@@ -149,11 +150,11 @@ trim side len = Audio . Trim   side len . toRawdio
 cutoff :: Side -> Time -> Audio r c -> Audio r c
 cutoff side len = Audio . Cutoff side len . toRawdio
 
--- | Gets the sample rate stored in the audio file's type.
+-- | Gets the sample rate stored in the audio expression's type.
 sampleRate :: (KnownNat r) => Audio r c -> Integer
 sampleRate = natVal . (undefined :: Audio r c -> Proxy r)
 
--- | Gets the number of channels stored in the audio file's type.
+-- | Gets the number of channels stored in the audio expression's type.
 channels :: (KnownNat c) => Audio r c -> Integer
 channels = natVal . (undefined :: Audio r c -> Proxy c)
 
@@ -192,19 +193,38 @@ getChannels raw = case raw of
 
 -- | Checks that the sample rate and channel count of the expression
 -- match the type it is being cast to. If not, returns 'Nothing'.
-fromRawdio :: (KnownNat r, KnownNat c) => Rawdio -> IO (Maybe (Audio r c))
+fromRawdio :: (KnownNat r, KnownNat c) => Rawdio -> IO (Either String (Audio r c))
 fromRawdio raw = do
   r <- getSampleRate raw
   c <- getChannels raw
-  let res = guard (r == sampleRate aud && c == channels aud)
-        >> Just (unsafeFromRawdio raw)
-      aud = fromJust res
+  let res = if r == sampleRate aud && c == channels aud
+        then Right $ unsafeFromRawdio raw
+        else Left $ unwords
+          [ "Expected sample rate"
+          , show $ sampleRate aud
+          , "and channel count"
+          , show $ channels aud
+          , "but got"
+          , show r
+          , "and"
+          , show c
+          ]
+      aud = (undefined :: Either a b -> b) res
   return res
 
 -- | Checks that the sample rate and channel count of the file
 -- match the type it is being cast to. If not, returns 'Nothing'.
-file :: (KnownNat r, KnownNat c) => FilePath -> IO (Maybe (Audio r c))
+file :: (KnownNat r, KnownNat c) => FilePath -> IO (Either String (Audio r c))
 file = fromRawdio . File
+
+-- | Like 'fromRawdio', but raises an error if the rate or count do not match.
+fromRawdio' :: (KnownNat r, KnownNat c) => Rawdio -> IO (Audio r c)
+fromRawdio' raw = fromRawdio raw >>=
+  either (\e -> error $ "fromRawdio': " ++ e) return
+
+-- | Like 'file', but raises an error if the rate or count do not match.
+file' :: (KnownNat r, KnownNat c) => FilePath -> IO (Audio r c)
+file' = fromRawdio' . File
 
 -- | Writes a typed audio expression to a file.
 runAudio
