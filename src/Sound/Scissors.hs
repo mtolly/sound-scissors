@@ -16,30 +16,33 @@ module Sound.Scissors
 , fromRawdio
 , unsafeFromRawdio
 
+-- * Basic audio primitives
 , silence
+, resample
+, file
+, unsafeFile
 
+-- * Combining multiple audio files
 , concatenate
 , merge
 , mix
-
 , concatenate'
 , merge'
 , mix'
 
+-- * Editing a single audio file
 , pad
 , trim
 , cutoff
+, vol
 
-, file
-, unsafeFile
-
-, resample
-
+-- * Querying sample rate and channel count
 , sampleRate
 , channels
 , getSampleRate
 , getChannels
 
+-- * Writing audio to a file
 , runAudio
 , runRawdio
 , runRawdioIn
@@ -62,7 +65,7 @@ import           System.Process   (callProcess, readProcess)
 -- | An audio expression, typed by sample rate and number of channels.
 newtype Audio (r :: Nat) (c :: Nat) = Audio
   { toRawdio :: Rawdio
-  -- ^ Removes the extra type information leaving a raw audio expression.
+  -- ^ Removes the extra type information, leaving a raw audio expression.
   } deriving (Eq, Ord, Show, Read)
 
 -- | A raw audio expression.
@@ -117,6 +120,10 @@ mix' vauds = Audio $ Mix $ map (second toRawdio) vauds
 -- | Mixes audio files together channel-wise.
 mix :: (KnownNat r, KnownNat c) => [Audio r c] -> Audio r c
 mix = mix' . map (1,)
+
+-- | Multiplies the volume of the audio by a scalar.
+vol :: Double -> Audio r c -> Audio r c
+vol v (Audio x) = Audio $ Concatenate [(v, x)]
 
 -- | An empty audio file, of zero length.
 silence :: (KnownNat r, KnownNat c) => Audio r c
