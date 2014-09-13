@@ -39,10 +39,12 @@ module Sound.Scissors
 ) where
 
 import           Control.Monad    (forM, guard)
+import           Data.Char        (toLower)
 import           Data.Maybe       (fromJust)
 import           Data.Proxy       (Proxy (..))
 import           GHC.TypeLits     (KnownNat, Nat, natVal, (+)())
 import           System.Directory (copyFile)
+import           System.FilePath  (takeExtension)
 import           System.IO        (hClose)
 import           System.IO.Temp   (openTempFile, withSystemTempDirectory)
 import           System.Process   (callProcess, readProcess)
@@ -204,7 +206,9 @@ runRawdioIn tempdir = go where
       return output
     File input -> do
       output <- new
-      sox [input, output]
+      case map toLower $ takeExtension input of
+        ".mp3" -> callProcess "lame" ["--decode", input, output]
+        _      -> sox [input, output]
       return output
     Concatenate auds -> combine "concatenate" auds
     Merge auds -> combine "merge" auds
