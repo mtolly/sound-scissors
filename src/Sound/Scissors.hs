@@ -11,7 +11,8 @@ import Data.Proxy
 import System.IO.Temp (openTempFile)
 import System.IO (hClose)
 import Control.Monad
-import System.Process (callProcess)
+import Data.Maybe
+import System.Process (callProcess, readProcess)
 
 -- | An audio expression, typed by sample frequency and number of channels.
 newtype Audio (freq :: Nat) (chans :: Nat)
@@ -94,6 +95,21 @@ channels = natVal . (undefined :: Audio f c -> Proxy c)
 -- if SoX returns a non-zero error code.
 runSox :: [String] -> IO ()
 runSox = callProcess "sox"
+
+getFrequency :: FilePath -> IO Integer
+getFrequency f = fmap read $ readProcess "soxi" ["-r", f] ""
+
+getChannels :: FilePath -> IO Integer
+getChannels f = fmap read $ readProcess "soxi" ["-c", f] ""
+
+file :: (KnownNat f, KnownNat c) => FilePath -> IO (Maybe (Audio f c))
+file fp = do
+  f <- getFrequency fp
+  c <- getChannels  fp
+  let res = guard (f == frequency aud && c == channels aud)
+        >> Just (unsafeFile fp)
+      aud = fromJust res
+  return res
 
 runRawdio
   :: FilePath -- ^ A directory for temporary files.
