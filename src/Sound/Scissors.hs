@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds      #-}
 {-# LANGUAGE GADTs          #-}
 {-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE TupleSections  #-}
 {-# LANGUAGE TypeOperators  #-}
 module Sound.Scissors
 
@@ -38,10 +39,12 @@ module Sound.Scissors
 
 ) where
 
+import           Control.Arrow    (second)
 import           Control.Monad    (forM, guard)
 import           Data.Char        (toLower)
 import           Data.Maybe       (fromJust)
 import           Data.Proxy       (Proxy (..))
+import qualified Data.Traversable as T
 import           GHC.TypeLits     (KnownNat, Nat, natVal, (+)())
 import           System.Directory (copyFile)
 import           System.FilePath  (takeExtension)
@@ -56,7 +59,7 @@ newtype Audio (r :: Nat) (c :: Nat)
 
 -- | A raw audio expression.
 data Rawdio
-  = Silence     Integer Integer
+  = Silence     Integer Integer -- ^ Sample rate & channel count.
   | File        FilePath
   | Pad         Side Time Rawdio
   | Trim        Side Time Rawdio
@@ -67,6 +70,7 @@ data Rawdio
   | Resample    Rawdio Integer
   deriving (Eq, Ord, Show, Read)
 
+-- | Which end of the audio to apply certain operations to.
 data Side = Front | Back
   deriving (Eq, Ord, Show, Read, Enum, Bounded)
 
@@ -79,20 +83,18 @@ unsafeFromRawdio :: Rawdio -> Audio r c
 unsafeFromRawdio = Audio
 
 -- | Glues audio files together sequentially.
-concatenate :: (KnownNat r, KnownNat c) => [Audio r c] -> Audio r c
+concatenate :: (KnownNat r, KnownNat c) => [(Double, Audio r c)] -> Audio r c
 concatenate []    = silence
-concatenate [aud] = aud
-concatenate auds  = Audio $ Concatenate [ (1, toRawdio aud) | aud <- auds ]
+concatenate vauds = Audio $ Concatenate $ map (second toRawdio) vauds
 
 -- | Stacks the channels of two audio files together.
-merge :: Audio r c1 -> Audio r c2 -> Audio r (c1 + c2)
-merge (Audio x) (Audio y) = Audio $ Merge [(1, x), (1, y)]
+merge :: (Double, Audio r c1) -> (Double, Audio r c2) -> Audio r (c1 + c2)
+merge (a, Audio x) (b, Audio y) = Audio $ Merge [(a, x), (b, y)]
 
 -- | Mixes audio files together channel-wise.
-mix :: (KnownNat r, KnownNat c) => [Audio r c] -> Audio r c
+mix :: (KnownNat r, KnownNat c) => [(Double, Audio r c)] -> Audio r c
 mix []    = silence
-mix [aud] = aud
-mix auds  = Audio $ Mix [ (1, toRawdio aud) | aud <- auds ]
+mix vauds = Audio $ Mix $ map (second toRawdio) vauds
 
 -- | An empty audio file, of zero length.
 silence :: (KnownNat r, KnownNat c) => Audio r c
@@ -237,15 +239,17 @@ runRawdioIn tempdir = go where
     return output
 
   combine :: String -> [(Double, Rawdio)] -> IO FilePath
-  combine method auds = if null $ drop 1 auds
-    then error "runAudio: can't combine less than 2 audio files"
-    else do
-      inputs <- forM auds $ \(v, aud) -> do
-        f <- go aud
-        return (v, f)
-      output <- new
-      sox
-        $ ["--combine", method]
-        ++ (inputs >>= \(vel, f) -> ["-v", show vel, show f])
-        ++ [output]
-      return output
+  combine _ [] = error "runAudio: can't combine 0 audio files"
+  combine _ [(v, aud)] = do
+    input <- go aud
+    output <- new
+    sox ["-v", show v, input, output]
+    return output
+  combine method vauds = do
+    inputs <- forM vauds $ T.mapM go
+    output <- new
+    sox
+      $ ["--combine", method]
+      ++ (inputs >>= \(v, f) -> ["-v", show v, f])
+      ++ [output]
+    return output
