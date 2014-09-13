@@ -111,36 +111,18 @@ runAudio tempdir = go where
       output <- new
       runSox [input, output, "rate", show freq]
       return output
-    Pad Begin len aud -> do
-      input <- go aud
-      output <- new
-      runSox [input, output, "pad", show len]
-      return output
-    Pad End len aud -> do
-      input <- go aud
-      output <- new
-      runSox [input, output, "pad", "0", show len]
-      return output
-    Trim Begin len aud -> do
-      input <- go aud
-      output <- new
-      runSox [input, output, "trim", show len]
-      return output
-    Trim End len aud -> do
-      input <- go aud
-      output <- new
-      runSox [input, output, "trim", "0", show $ negate len]
-      return output
-    Cutoff Begin len aud -> do
-      input <- go aud
-      output <- new
-      runSox [input, output, "trim", "0", show len]
-      return output
-    Cutoff End len aud -> do
-      input <- go aud
-      output <- new
-      runSox [input, output, "trim", show $ negate len]
-      return output
+    Pad    Begin len aud -> transform aud ["pad", show len]
+    Pad    End   len aud -> transform aud ["pad", "0", show len]
+    Trim   Begin len aud -> transform aud ["trim", show len]
+    Trim   End   len aud -> transform aud ["trim", "0", show $ negate len]
+    Cutoff Begin len aud -> transform aud ["trim", "0", show len]
+    Cutoff End   len aud -> transform aud ["trim", show $ negate len]
+  transform :: Audio' -> [String] -> IO FilePath
+  transform aud args = do
+    input <- go aud
+    output <- new
+    runSox $ input : output : args
+    return output
   combine :: String -> [(Double, Audio')] -> IO FilePath
   combine method auds = if null $ drop 1 auds
     then error "runAudio: can't combine less than 2 audio files"
