@@ -13,12 +13,9 @@ import System.IO (hClose)
 import Control.Monad
 import System.Process (callProcess)
 
-data Side = Front | Back
-  deriving (Eq, Ord, Show, Read, Enum, Bounded)
-
-data Time
-  = Seconds Double
-  | Samples Double
+-- | An audio expression, typed by sample frequency and number of channels.
+newtype Audio (freq :: Nat) (chans :: Nat)
+  = Audio { toRawdio :: Rawdio }
   deriving (Eq, Ord, Show, Read)
 
 -- | A raw audio expression.
@@ -34,9 +31,12 @@ data Rawdio
   | Resample    Rawdio Integer
   deriving (Eq, Ord, Show, Read)
 
--- | An audio expression, typed by sample frequency and number of channels.
-newtype Audio (freq :: Nat) (chans :: Nat)
-  = Audio { toRawdio :: Rawdio }
+data Side = Front | Back
+  deriving (Eq, Ord, Show, Read, Enum, Bounded)
+
+data Time
+  = Seconds Double
+  | Samples Double
   deriving (Eq, Ord, Show, Read)
 
 unsafeFromRawdio :: Rawdio -> Audio c f
