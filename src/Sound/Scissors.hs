@@ -9,6 +9,7 @@ module Sound.Scissors
 , Side(..)
 , Time(..)
 , toRawdio
+, fromRawdio
 , unsafeFromRawdio
 
 , silence
@@ -31,17 +32,20 @@ module Sound.Scissors
 , getSampleRate
 , getChannels
 
+, runAudio
 , runRawdio
+, runRawdioIn
 
 ) where
 
-import           Control.Monad  (forM, guard)
-import           Data.Maybe     (fromJust)
-import           Data.Proxy     (Proxy (..))
-import           GHC.TypeLits   (KnownNat, Nat, natVal, (+)())
-import           System.IO      (hClose)
-import           System.IO.Temp (openTempFile)
-import           System.Process (callProcess, readProcess)
+import           Control.Monad    (forM, guard)
+import           Data.Maybe       (fromJust)
+import           Data.Proxy       (Proxy (..))
+import           GHC.TypeLits     (KnownNat, Nat, natVal, (+)())
+import           System.Directory (copyFile)
+import           System.IO        (hClose)
+import           System.IO.Temp   (openTempFile, withSystemTempDirectory)
+import           System.Process   (callProcess, readProcess)
 
 -- | An audio expression, typed by sample rate and number of channels.
 newtype Audio (r :: Nat) (c :: Nat)
@@ -122,29 +126,64 @@ channels = natVal . (undefined :: Audio r c -> Proxy c)
 
 -- | Runs SoX with the given list of arguments. An exception will be raised
 -- if SoX returns a non-zero error code.
-runSox :: [String] -> IO ()
-runSox = callProcess "sox"
+sox :: [String] -> IO ()
+sox = callProcess "sox"
 
-getSampleRate :: FilePath -> IO Integer
-getSampleRate f = fmap read $ readProcess "soxi" ["-r", f] ""
+getSampleRate :: Rawdio -> IO Integer
+getSampleRate raw = case raw of
+  Silence r _ -> return r
+  File f -> fmap read $ readProcess "soxi" ["-r", f] ""
+  Pad    _ _ raw' -> getSampleRate raw'
+  Trim   _ _ raw' -> getSampleRate raw'
+  Cutoff _ _ raw' -> getSampleRate raw'
+  Concatenate pairs -> getSampleRate $ snd $ head pairs
+  Merge       pairs -> getSampleRate $ snd $ head pairs
+  Mix         pairs -> getSampleRate $ snd $ head pairs
+  Resample _ r -> return r
 
-getChannels :: FilePath -> IO Integer
-getChannels f = fmap read $ readProcess "soxi" ["-c", f] ""
+getChannels :: Rawdio -> IO Integer
+getChannels raw = case raw of
+  Silence _ c -> return c
+  File f -> fmap read $ readProcess "soxi" ["-c", f] ""
+  Pad    _ _ raw' -> getChannels raw'
+  Trim   _ _ raw' -> getChannels raw'
+  Cutoff _ _ raw' -> getChannels raw'
+  Concatenate pairs -> getChannels $ snd $ head pairs
+  Merge       pairs -> fmap sum $ mapM (getChannels . snd) pairs
+  Mix         pairs -> getChannels $ snd $ head pairs
+  Resample _ r -> return r
 
-file :: (KnownNat r, KnownNat c) => FilePath -> IO (Maybe (Audio r c))
-file fp = do
-  r <- getSampleRate fp
-  c <- getChannels fp
+fromRawdio :: (KnownNat r, KnownNat c) => Rawdio -> IO (Maybe (Audio r c))
+fromRawdio raw = do
+  r <- getSampleRate raw
+  c <- getChannels raw
   let res = guard (r == sampleRate aud && c == channels aud)
-        >> Just (unsafeFile fp)
+        >> Just (unsafeFromRawdio raw)
       aud = fromJust res
   return res
 
+file :: (KnownNat r, KnownNat c) => FilePath -> IO (Maybe (Audio r c))
+file = fromRawdio . File
+
+runAudio
+  :: Audio r c -- ^ Audio expression to evaluate.
+  -> FilePath -- ^ Output WAV file to generate.
+  -> IO ()
+runAudio = runRawdio . toRawdio
+
 runRawdio
+  :: Rawdio -- ^ Audio expression to evaluate.
+  -> FilePath -- ^ Output WAV file to generate.
+  -> IO ()
+runRawdio raw out = withSystemTempDirectory "scissors" $ \tempdir -> do
+  f <- runRawdioIn tempdir raw
+  copyFile f out
+
+runRawdioIn
   :: FilePath -- ^ A directory for temporary files.
   -> Rawdio -- ^ Audio expression to evaluate.
-  -> IO FilePath
-runRawdio tempdir = go where
+  -> IO FilePath -- ^ The output file, which will be in the temporary directory.
+runRawdioIn tempdir = go where
 
   new :: IO FilePath
   new = do
@@ -155,7 +194,7 @@ runRawdio tempdir = go where
   go x = case x of
     Silence rate chans -> do
       output <- new
-      runSox
+      sox
         [ "-n"
         , output
         , "trim", "0", "0"
@@ -163,14 +202,17 @@ runRawdio tempdir = go where
         , "channels", show chans
         ]
       return output
-    File fp -> return fp
+    File input -> do
+      output <- new
+      sox [input, output]
+      return output
     Concatenate auds -> combine "concatenate" auds
     Merge auds -> combine "merge" auds
     Mix auds -> combine "mix" auds
     Resample aud rate -> do
       input <- go aud
       output <- new
-      runSox [input, output, "rate", show rate]
+      sox [input, output, "rate", show rate]
       return output
     Pad    Front len aud -> transform aud ["pad", showTime len]
     Pad    Back  len aud -> transform aud ["pad", "0", showTime len]
@@ -187,7 +229,7 @@ runRawdio tempdir = go where
   transform aud args = do
     input <- go aud
     output <- new
-    runSox $ input : output : args
+    sox $ input : output : args
     return output
 
   combine :: String -> [(Double, Rawdio)] -> IO FilePath
@@ -198,7 +240,7 @@ runRawdio tempdir = go where
         f <- go aud
         return (v, f)
       output <- new
-      runSox
+      sox
         $ ["--combine", method]
         ++ (inputs >>= \(vel, f) -> ["-v", show vel, show f])
         ++ [output]
