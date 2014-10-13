@@ -140,11 +140,11 @@ resample (Audio x) = let res = Audio $ Resample x $ sampleRate res in res
 
 -- | Pads one end of the audio with silence.
 pad :: Side -> Time -> Audio r c -> Audio r c
-pad side len = Audio . Pad    side len . toRawdio
+pad side len = Audio . Pad side len . toRawdio
 
 -- | Trims a chunk of time off one end of the audio.
 trim :: Side -> Time -> Audio r c -> Audio r c
-trim side len = Audio . Trim   side len . toRawdio
+trim side len = Audio . Trim side len . toRawdio
 
 -- | Cuts off everything after a length of time (counted from either end).
 cutoff :: Side -> Time -> Audio r c -> Audio r c
